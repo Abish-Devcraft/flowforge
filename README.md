@@ -49,4 +49,4 @@ src/
 
 ## Change the model
 
-Set `VITE_GEMINI_MODEL` in `.env` (default `gemini-2.5-flash`) or edit it in Settings.
+Set `VITE_GEMINI_MODEL` in `.env` (default `gemini-3.8-flash`) or edit it in Settings. Saved `gemini-2.5-flash` settings are automatically upgraded to `gemini-3.8-flash`.

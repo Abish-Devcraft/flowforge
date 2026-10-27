@@ -1,16 +1,22 @@
 // Gemini REST client. No SDK needed — one fetch call with structured JSON output.
 
-const DEFAULT_MODEL = import.meta.env.VITE_GEMINI_MODEL || "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.8-flash";
+const CONFIGURED_MODEL = import.meta.env.VITE_GEMINI_MODEL || DEFAULT_MODEL;
+const REQUEST_TIMEOUT_MS = 90_000;
+
+function currentModel(model) {
+  return model === "gemini-2.5-flash" ? DEFAULT_MODEL : model;
+}
 
 export function getSettings() {
   try {
     const s = JSON.parse(localStorage.getItem("ff_settings") || "{}");
     return {
       apiKey: s.apiKey || import.meta.env.VITE_GEMINI_API_KEY || "",
-      model: s.model || DEFAULT_MODEL,
+      model: currentModel(s.model || CONFIGURED_MODEL),
     };
   } catch {
-    return { apiKey: import.meta.env.VITE_GEMINI_API_KEY || "", model: DEFAULT_MODEL };
+    return { apiKey: import.meta.env.VITE_GEMINI_API_KEY || "", model: currentModel(CONFIGURED_MODEL) };
   }
 }
 
@@ -28,38 +34,54 @@ async function callGemini(prompt, schema) {
     model
   )}:generateContent`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": apiKey,
-    },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.4,
-        responseMimeType: "application/json",
-        responseSchema: schema,
-      },
-    }),
-  });
-
-  if (!res.ok) {
-    let detail = "";
-    try {
-      const err = await res.json();
-      detail = err?.error?.message || "";
-    } catch {}
-    throw new Error(`Gemini error ${res.status}${detail ? `: ${detail}` : ""}`);
-  }
-
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || "";
-  if (!text) throw new Error("Gemini returned an empty response.");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.4,
+          thinkingConfig: { thinkingLevel: "low" },
+          responseMimeType: "application/json",
+          responseSchema: schema,
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const err = await res.json();
+        detail = err?.error?.message || "";
+      } catch {}
+      throw new Error(`Gemini error ${res.status}${detail ? `: ${detail}` : ""}`);
+    }
+
+    const data = await res.json();
+    const candidate = data?.candidates?.[0];
+    const text = candidate?.content?.parts?.map((p) => p.text || "").join("") || "";
+    if (!text) {
+      const reason = candidate?.finishReason || data?.promptFeedback?.blockReason;
+      throw new Error(`Gemini returned no text${reason ? ` (${reason})` : ""}. Please try again.`);
+    }
     return JSON.parse(text);
-  } catch {
-    throw new Error("Could not read Gemini's response as JSON. Try again.");
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Gemini took too long to respond. Please try again.");
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error("Could not read Gemini's response as JSON. Try again.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

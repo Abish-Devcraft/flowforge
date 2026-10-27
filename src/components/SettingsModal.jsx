@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { getSettings, saveSettings } from "../lib/gemini.js";
 
-const MODELS = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"];
+const MODELS = ["gemini-3.8-flash"];
 
 export default function SettingsModal({ onClose }) {
   const initial = getSettings();
